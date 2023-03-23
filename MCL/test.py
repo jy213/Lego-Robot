@@ -1,0 +1,659 @@
+
+#!/usr/bin/env python 
+
+# Some suitable functions and data structures for drawing a map and particles
+
+from __future__ import print_function # use python 3 syntax but make it compatible with python 2
+from __future__ import division      #                          ''
+
+import numpy as np
+import time     # import the time library for the sleep function
+import brickpi3 # import the BrickPi3 drivers
+import random
+import math
+import copy
+
+BP = brickpi3.BrickPi3()
+
+ORIGIN = (84,30,0)
+NUMBER_OF_PARTICLES = 100
+PARTICLE_UPDATED = []
+WEIGHTS = []
+
+DISTANCE = 10
+NUMBER_OF_PARTICLES = 100
+WEIGHT = 1/NUMBER_OF_PARTICLES 
+ANGLE = 90
+FULL_PARTICLE_LIST = []
+
+WHEEL_RADIUS = 2.8
+AXIS_RADIUS = 6.6
+
+CURRENT_X = 0
+CURRENT_Y = 0
+CURRENT_THETA = 0
+K_F = 1.14
+K_T = 0.96
+K_RIGHT = 0.965
+
+value = 0
+
+O_x = 0
+O_y = 0
+A_x = 0
+A_y = 168
+B_x = 84
+B_y = 168
+C_x = 84
+C_y = 126
+D_x = 85
+D_y = 210
+E_x = 168
+E_y = 210
+F_x = 168
+F_y = 84
+G_x = 210 
+G_y = 84
+
+H_x = 210
+H_y = 0
+
+O = (O_x,O_y)
+A = (A_x,A_y)
+B = (B_x,B_y)
+C = (C_x,C_y)
+D = (D_x,D_y)
+E = (E_x,E_y)
+F = (F_x,F_y)
+G = (G_x,G_y)
+H = (H_x,H_y)
+
+WALL_LIST = [[O[0],O[1],A[0],A[1]],[A[0],A[1],B[0],B[1]],[C[0],C[1],D[0],D[1]],[D[0],D[1],E[0],E[1]],[E[0],E[1],F[0],F[1]],[F[0],F[1],G[0],G[1]],[G[0],G[1],H[0],H[1]],[O[0],O[1],H[0],H[1]]]
+
+std_s = 1
+
+def particle_mean_nooffset(particles):
+    sum_x = 0
+    sum_y = 0
+    sum_theta = 0
+    mean_x = 0
+    mean_y = 0
+    mean_theta = 0
+    mean = []
+    for i in range(NUMBER_OF_PARTICLES):
+        sum_x += particles[i][0]
+        sum_y += particles[i][1]
+        sum_theta += particles[i][2]
+    mean_x = sum_x / (NUMBER_OF_PARTICLES)
+    mean_y = sum_y / (NUMBER_OF_PARTICLES) 
+    mean_theta = sum_theta / (NUMBER_OF_PARTICLES)
+    mean.append(mean_x)
+    mean.append(mean_y)
+    mean.append(mean_theta)
+    return mean
+
+def particle_mean(particles):
+    sum_x = 0
+    sum_y = 0
+    sum_theta = 0
+    mean_x = 0
+    mean_y = 0
+    mean_theta = 0
+    mean = []
+    for i in range(NUMBER_OF_PARTICLES):
+        sum_x += particles[i][0]
+        sum_y += particles[i][1]
+        sum_theta += particles[i][2]
+    mean_x = sum_x / (NUMBER_OF_PARTICLES) - 84
+    mean_y = sum_y / (NUMBER_OF_PARTICLES) - 30
+    mean_theta = sum_theta / (NUMBER_OF_PARTICLES)
+    mean.append(mean_x)
+    mean.append(mean_y)
+    mean.append(mean_theta)
+    return mean
+    
+def get_sonar_value():
+    global value
+    BP.set_sensor_type(BP.PORT_2, BP.SENSOR_TYPE.NXT_ULTRASONIC)
+    for i in range(10):
+        try:
+            value = BP.get_sensor(BP.PORT_2)
+        except brickpi3.SensorError as error:
+            print(error)
+        time.sleep(0.02)  # delay for 0.02 seconds (20ms) to reduce the Raspberry Pi CPU load.
+    BP.reset_all()  
+    return value
+
+
+def particle_initialization():
+    for i in range(NUMBER_OF_PARTICLES):
+        PARTICLE_UPDATED.append(ORIGIN)
+        WEIGHTS.append(1/NUMBER_OF_PARTICLES)
+        
+def cal_m(A_x, A_y, B_x, B_y, x, y, theta):
+    m_nominator = (B_y - A_y)*(A_x - x) - (B_x - A_x)*(A_y - y)
+    m_denominator = (B_y - A_y)*math.cos(theta) - (B_x - A_x)*math.sin(theta)
+    m = m_nominator/m_denominator
+    return m
+
+def world_val(x,y,theta,m):
+    x += m * math.cos(theta)
+    y += m * math.sin(theta)
+    return[x,y]
+
+def wall_identification(x,y,wall):
+    if wall == 0:
+        if((O_x-2) < x < (O_x+2) and (O_y-2) < y < (A_y+2)): 
+            # print('wall a')
+            return 'a'
+
+    elif wall == 1:      
+        if((A_y-2) < y < (A_y+2) and (A_x-2) < x < (B_x+2)):
+            # print('wall b')
+            return 'b'
+
+    elif wall == 2:    
+        if((C_x-2) < x < (C_x+2) and (C_y-2) < y <= (D_y+2)):
+            # print('wall c')
+            return 'c'
+        
+    elif wall == 3:  
+        if((D_y-2) < y < (D_y+2) and (D_x-2) < x < (E_x+2)):
+            # print('wall d')
+            return 'd'
+        
+    elif wall == 4:  
+        if((F_x-2) < x < (F_x+2) and (F_y-2) < y < (E_y+2)):
+            # print('wall e')
+            return 'e'
+        
+    elif wall == 5:  
+        if((F_y-2) < y < (F_y+2) and (F_x-2) < x < (G_x+2)):
+            # print('wall f')
+            return 'f'
+        
+    elif wall == 6:  
+        if ((H_x-2) < x < (H_x+2) and (H_y-2) < y < (G_y+2)):
+            # print('wall g')
+            return 'g'
+
+    elif wall == 7:      
+        if ((O_y-2) < y < (O_y+2) and (O_x-2) < x < (H_x+2)):
+            # print('wall h')
+            return 'h'
+        
+    else:
+        return False
+    
+def calculate_likelihood(z,m):
+    likelihood = math.exp(-(z-m)**2 / 2*(std_s**2))
+    # print('(z,m)',z,' ',m)
+    return likelihood
+
+def update_weights(weight_list, likelihood_list):
+    for i in range(len(weight_list)):
+        weight_list[i] = weight_list[i] * likelihood_list[i]
+    return weight_list
+
+def forward_update_particle(particle, distance):
+
+    # print("distance:", distance)
+
+  
+    for i in range(NUMBER_OF_PARTICLES):
+        e = random.gauss(mu = 0, sigma = 0.1)
+        f = random.gauss(mu = 0, sigma = 0.02)
+        PARTICLE_UPDATED[i] = (particle[i][0]+(distance + e) * math.cos(particle[i][2]), particle[i][1]+(distance + e) * math.sin(particle[i][2]), particle[i][2]+f)
+    return PARTICLE_UPDATED
+
+def turn_update_particles(particle, angle):
+    for i in range(NUMBER_OF_PARTICLES):
+        g = random.gauss(mu = 0, sigma = 0.1)
+        PARTICLE_UPDATED[i] = (particle[i][0], particle[i][1], particle[i][2]+(angle + g))
+    time.sleep(3)
+   
+def weight_normalize(weight_list):
+    #normalize weight
+    sum_of_weight = 0
+    for i in range(len(weight_list)):
+        sum_of_weight += weight_list[i]
+    for i in range(len(weight_list)):
+        weight_list[i] /= (sum_of_weight)
+    return weight_list
+
+# Task 2
+def resampled_particles(partcile_list, weight_list):
+    resampled_particles = []
+    resampled_indices = np.random.choice(len(partcile_list), size=len(partcile_list), replace=True, p=weight_list)
+    for i in resampled_indices:
+        resampled_particles.append(partcile_list[i])
+
+    # Reset weights to be uniform
+    for i in range(len(weight_list)):
+        weight_list[i] = 1.0 / len(resampled_particles)
+
+    return resampled_particles
+
+#Task 3
+def particle_predicted(particle_list, weight_list_normal):
+    sum = 0
+    for i in range(len(particle_list)):
+        sum += particle_list[i] * weight_list_normal[i]
+
+
+# A Canvas class for drawing a map and particles:
+#     - it takes care of a proper scaling and coordinate transformation between
+#      the map frame of reference (in cm) and the display (in pixels)
+class Canvas:
+    def __init__(self,map_size=210):
+        self.map_size    = map_size;    # in cm;
+        self.canvas_size = 768;         # in pixels;
+        self.margin      = 0.05*map_size
+        self.scale       = self.canvas_size/(map_size+2*self.margin)
+
+    def drawLine(self,line):
+        x1 = self.__screenX(line[0])
+        y1 = self.__screenY(line[1])
+        x2 = self.__screenX(line[2])
+        y2 = self.__screenY(line[3])
+        print ("drawLine:" + str((x1,y1,x2,y2)))
+
+    def drawParticles(self,data):
+        display = [(self.__screenX(d[0]),self.__screenY(d[1])) + d[2:] for d in data]
+        print ("drawParticles:" + str(display))
+
+    def __screenX(self,x):
+        return (x + self.margin)*self.scale
+
+    def __screenY(self,y):
+        return (self.map_size + self.margin - y)*self.scale
+
+# A Map class containing walls
+class Map:
+    def __init__(self):
+        self.walls = []
+
+    def add_wall(self,wall):
+        self.walls.append(wall)
+
+    def clear(self):
+        self.walls = []
+
+    def draw(self):
+        for wall in self.walls:
+            canvas.drawLine(wall)
+
+# Simple Particles set
+class Particles:
+    def __init__(self):
+        self.n = 100;    
+        self.data = []
+
+    def update(self):
+        self.data = [(PARTICLE_UPDATED[i][0], PARTICLE_UPDATED[i][1], PARTICLE_UPDATED[i][2], WEIGHTS[i]) for i in range(self.n)]
+    
+    def draw(self):
+        canvas.drawParticles(self.data)
+
+canvas = Canvas();    # global canvas we are going to draw on
+
+mymap = Map()
+# Definitions of walls
+# a: O to A
+# b: A to B
+# c: C to D
+# d: D to E
+# e: E to F
+# f: F to G
+# g: G to H
+# h: H to O
+mymap.add_wall((0,0,0,168));        # a
+mymap.add_wall((0,168,84,168));     # b
+mymap.add_wall((84,126,84,210));    # c
+mymap.add_wall((84,210,168,210));   # d
+mymap.add_wall((168,210,168,84));   # e
+mymap.add_wall((168,84,210,84));    # f
+mymap.add_wall((210,84,210,0));     # g
+mymap.add_wall((210,0,0,0));        # h
+mymap.draw()
+
+particles = Particles()
+
+# t = 0
+# while True:
+#     particles.update()
+#     particles.draw()
+#     t += 0.05
+#     time.sleep(0.05)
+
+
+
+        #1.Particle initialization 
+        #2.Forward_update_particle / Turn_update_particle
+        #3.Get_sonar_value (get value z)
+        #4.Calculate value m
+        #5.world_val 
+        #6.Wall identification
+        #7.Calculate likelihood 
+        #8.Update weights
+        #9.Weight normalization 
+        #10.Resampled
+        #Loop to step 2
+
+m_list = [None] * 8
+likelihood_list = [None] * 100
+
+particle_initialization()
+
+#debugging
+# print('particle initialization begin ')
+# print("initialize particles",PARTICLE_UPDATED)
+# print("initialize weights",WEIGHTS)
+# print('particle initialization end ')
+
+
+def forward(distance):
+    global PARTICLE_UPDATED, WEIGHTS
+    forward_update_particle(PARTICLE_UPDATED,distance)
+    #debugging
+    # print('forward_update begin')
+    # print('forward_updated particles', PARTICLE_UPDATED)
+    # print('weights,',WEIGHTS)
+    # print('forward_update end')
+
+    z = get_sonar_value()
+    # z = 180
+    print("sonar value: ", z)
+
+    ##up to now OK
+    wall_pos = []
+    # print('particle 1: ', (PARTICLE_UPDATED[1][0],PARTICLE_UPDATED[1][1],PARTICLE_UPDATED[1][2]))
+    for j in range(NUMBER_OF_PARTICLES):
+        for i in range(8):
+                m = cal_m(WALL_LIST[i][0],WALL_LIST[i][1],WALL_LIST[i][2],WALL_LIST[i][3],particle_mean_nooffset(PARTICLE_UPDATED)[0],particle_mean_nooffset(PARTICLE_UPDATED)[1],particle_mean_nooffset(PARTICLE_UPDATED)[2])
+                m_list[i] = m
+        # print('m_list',m_list)
+
+      
+        for i in range(8):
+            if(m_list[i]<0): continue
+
+            world_x = world_val(PARTICLE_UPDATED[j][0],PARTICLE_UPDATED[j][1],PARTICLE_UPDATED[j][2],m_list[i])[0]
+            world_y = world_val(PARTICLE_UPDATED[j][0],PARTICLE_UPDATED[j][1],PARTICLE_UPDATED[j][2],m_list[i])[1]
+
+            if wall_identification(int(world_x), int(world_y),i):
+            #     print('not found')
+            # else: 
+            #     # wall_identification(int(world_x),int(world_y),i)
+                wall_pos.append(wall_identification(int(world_x),int(world_y),i))
+        m_min = 600000
+        # index_min = 100000
+
+        for i in range(len(wall_pos)):
+            index = ord(wall_pos[i]) - ord('a')
+            # print('index ', index)
+            if m_list[index] < m_min:
+                m_min = m_list[index]
+                # index_min = index
+            
+        # nearest_wall = chr(index + ord('a'))
+        # print('nearest_wall, ',nearest_wall)
+
+        likelihood_list[j] = 10**50 * calculate_likelihood(z,m_min) + 2
+
+    # print('m_list, ', m_list)
+    # print('likelihood_list, ' , likelihood_list)
+
+
+    WEIGHTS = update_weights(WEIGHTS,likelihood_list)
+    weight_normalize(WEIGHTS)
+    # print(WEIGHTS)
+    sum = 0
+    for i in range(len(WEIGHTS)):
+        sum += WEIGHTS[i]
+    print('sum of weight after normalization,', sum)
+    PARTICLE_UPDATED = resampled_particles(PARTICLE_UPDATED,WEIGHTS)
+
+    particles.update()
+    particles.draw()
+
+def turn(angle):
+    global PARTICLE_UPDATED, WEIGHTS
+    turn_update_particles(PARTICLE_UPDATED,angle)
+    #debugging
+    # print('forward_update begin')
+    # print('forward_updated particles', PARTICLE_UPDATED)
+    # print('weights,',WEIGHTS)
+    # print('forward_update end')
+
+    z = get_sonar_value()
+    # z = 180
+    print("sonar value: ", z)
+
+    ##up to now OK
+    for i in range(8):
+            # m = cal_m(WALL_LIST[i][0],WALL_LIST[i][1],WALL_LIST[i][2],WALL_LIST[i][3],PARTICLE_UPDATED[j][0],PARTICLE_UPDATED[j][1],PARTICLE_UPDATED[j][2])
+            m = cal_m(WALL_LIST[i][0],WALL_LIST[i][1],WALL_LIST[i][2],WALL_LIST[i][3],particle_mean_nooffset(PARTICLE_UPDATED)[0],particle_mean_nooffset(PARTICLE_UPDATED)[1],particle_mean_nooffset(PARTICLE_UPDATED)[2])
+            m_list[i] = m
+
+    # print('particle 1: ', (PARTICLE_UPDATED[1][0],PARTICLE_UPDATED[1][1],PARTICLE_UPDATED[1][2]))
+    wall_pos = []
+    for j in range(NUMBER_OF_PARTICLES):
+        # for i in range(8):
+        #         # m = cal_m(WALL_LIST[i][0],WALL_LIST[i][1],WALL_LIST[i][2],WALL_LIST[i][3],PARTICLE_UPDATED[j][0],PARTICLE_UPDATED[j][1],PARTICLE_UPDATED[j][2])
+        #         m = cal_m(WALL_LIST[i][0],WALL_LIST[i][1],WALL_LIST[i][2],WALL_LIST[i][3],particle_mean_nooffset(PARTICLE_UPDATED)[0],particle_mean_nooffset(PARTICLE_UPDATED)[1],particle_mean_nooffset(PARTICLE_UPDATED)[2])
+        #         m_list[i] = m
+        # print('m_list',m_list)
+
+        for i in range(8):
+            if(m_list[i]<0): continue
+
+            world_x = world_val(PARTICLE_UPDATED[j][0],PARTICLE_UPDATED[j][1],PARTICLE_UPDATED[j][2],m_list[i])[0]
+            world_y = world_val(PARTICLE_UPDATED[j][0],PARTICLE_UPDATED[j][1],PARTICLE_UPDATED[j][2],m_list[i])[1]
+
+            if wall_identification(int(world_x), int(world_y),i):
+            #     print('not found')
+            # else: 
+            #     # wall_identification(int(world_x),int(world_y),i)
+                wall_pos.append(wall_identification(int(world_x),int(world_y),i))
+        
+        # print("wall pos, " , wall_pos)
+        m_min = 600000
+        # index_min = 100000
+
+        for i in range(len(wall_pos)):
+            index = ord(wall_pos[i]) - ord('a')
+            # print('index ', index)
+            if m_list[index] < m_min:
+                m_min = m_list[index]
+                # index_min = index
+            
+        # nearest_wall = chr(index + ord('a'))
+        # print('nearest_wall, ',nearest_wall)
+
+        likelihood_list[j] = 10**50 * calculate_likelihood(z,m_min) + 2
+
+    # print('m_list, ', m_list)
+    # print('likelihood_list, ' , likelihood_list)
+    
+
+
+    WEIGHTS = update_weights(WEIGHTS,likelihood_list)
+    weight_normalize(WEIGHTS)
+    # print(WEIGHTS)
+    sum = 0
+    for i in range(len(WEIGHTS)):
+        sum += WEIGHTS[i]
+    print('sum of weight after normalization,', sum)
+    PARTICLE_UPDATED = resampled_particles(PARTICLE_UPDATED,WEIGHTS)
+
+    particles.update()
+    particles.draw()
+
+def move_forward(distance):
+    BP.set_motor_position_kp(BP.PORT_A,25)
+    BP.set_motor_position_kd(BP.PORT_A,70)
+    BP.set_motor_limits(BP.PORT_A,200,230)
+
+    BP.set_motor_position_kp(BP.PORT_D,25)
+    BP.set_motor_position_kd(BP.PORT_D,70)
+    BP.set_motor_limits(BP.PORT_D,200,230)
+
+    encoder_value = int(distance * 180/(np.pi * WHEEL_RADIUS))
+    BP.set_motor_position(BP.PORT_A, encoder_value)
+    BP.set_motor_position(BP.PORT_D, encoder_value)
+    BP.offset_motor_encoder(BP.PORT_A, BP.get_motor_encoder(BP.PORT_A))
+    BP.offset_motor_encoder(BP.PORT_D, BP.get_motor_encoder(BP.PORT_D))
+    time.sleep(2)
+
+def rotate_left(alpha):
+    BP.set_motor_position_kp(BP.PORT_A,25)
+    BP.set_motor_position_kd(BP.PORT_A,70)
+    BP.set_motor_limits(BP.PORT_A,200,230)
+
+    BP.set_motor_position_kp(BP.PORT_D,25)
+    BP.set_motor_position_kd(BP.PORT_D,70)
+    BP.set_motor_limits(BP.PORT_D,200,230)
+    #alpha = angle in radians
+    encoder_value = int(alpha*AXIS_RADIUS* 180/(np.pi * WHEEL_RADIUS))
+    BP.set_motor_position(BP.PORT_A, encoder_value)
+    BP.set_motor_position(BP.PORT_D, -encoder_value)
+    BP.offset_motor_encoder(BP.PORT_A, BP.get_motor_encoder(BP.PORT_A))
+    BP.offset_motor_encoder(BP.PORT_D, BP.get_motor_encoder(BP.PORT_D))
+    time.sleep(2)
+
+def rotate_right(alpha):
+    BP.set_motor_position_kp(BP.PORT_A,25)
+    BP.set_motor_position_kd(BP.PORT_A,70)
+    BP.set_motor_limits(BP.PORT_A,200,230)
+
+    BP.set_motor_position_kp(BP.PORT_D,25)
+    BP.set_motor_position_kd(BP.PORT_D,70)
+    BP.set_motor_limits(BP.PORT_D,200,230)
+    #alpha = angle in radians
+    encoder_value = int(alpha*AXIS_RADIUS* 180/(np.pi * WHEEL_RADIUS))
+    BP.set_motor_position(BP.PORT_A, -encoder_value)
+    BP.set_motor_position(BP.PORT_D, encoder_value)
+    BP.offset_motor_encoder(BP.PORT_A, BP.get_motor_encoder(BP.PORT_A))
+    BP.offset_motor_encoder(BP.PORT_D, BP.get_motor_encoder(BP.PORT_D))
+    time.sleep(2)
+
+#given the robot’s current estimated location (x, y, θ),
+#drives it to the waypoint at (Wx, Wx) specified in metre units
+def naviagteToWaypoint(target_x, target_y):
+    target = []
+    global CURRENT_X, CURRENT_Y, CURRENT_THETA
+    displacement_x = target_x - CURRENT_X
+    displacement_y = target_y - CURRENT_Y
+
+    print("displacement_x", displacement_x)
+    print("displacement_y", displacement_y)
+    displacement_theta = math.atan(displacement_y / (displacement_x + 0.000001))
+    #run
+    target_theta = displacement_theta - CURRENT_THETA
+    target_distance = math.sqrt(displacement_x**2 + displacement_y**2)
+
+     #fist quadrant
+    if(displacement_x>=0 and displacement_y>0): 
+        if target_theta < np.pi:
+            rotate_left(target_theta * K_T)
+        else:
+            rotate_right((2 * np.pi - target_theta) * K_T)
+
+        CURRENT_THETA += target_theta
+        print("targey", target_theta)
+        print("current",CURRENT_THETA)
+
+
+    #third quadrant
+    elif(displacement_x<0 and displacement_y<=0):
+        if (np.pi-target_theta) < np.pi: 
+            rotate_right((np.pi-target_theta) * K_T)
+        else:
+            rotate_left((2 * np.pi - (np.pi-target_theta)) * K_T)
+
+        CURRENT_THETA -= (np.pi-target_theta)
+        print("targey", target_theta)
+        print("current",CURRENT_THETA)
+
+
+    #second quadrant
+    elif(displacement_x<0 and displacement_y>=0):
+        if (np.pi+target_theta) < np.pi:
+            rotate_left((np.pi+target_theta) * K_T)
+        else:
+            rotate_right((2* np.pi - (np.pi+target_theta)) * K_T)
+
+        CURRENT_THETA += (np.pi+target_theta)
+        print("targey", target_theta)
+        print("current",CURRENT_THETA)
+
+
+    #fourth quadrant
+    elif(displacement_x>=0 and displacement_y<0):
+        if (-target_theta) < np.pi:
+            rotate_right(-(target_theta * K_T))
+        else:
+            rotate_left((2 * np.pi + target_theta) * K_T)
+        CURRENT_THETA += target_theta
+        print("targey", target_theta)
+        print("current",CURRENT_THETA)
+    
+    move_forward(target_distance * K_F)
+    # forward(target_distance)
+    CURRENT_X += (target_distance * math.cos(CURRENT_THETA))
+    CURRENT_Y += (target_distance * math.sin(CURRENT_THETA))
+    print("current x", CURRENT_X)
+    print("current y", CURRENT_Y)
+    # CURRENT_X += particle_mean(PARTICLE_UPDATED)[0]
+    # CURRENT_Y += particle_mean(PARTICLE_UPDATED)[1]
+
+def run():
+    naviagteToWaypoint(20,0)
+    naviagteToWaypoint(40,0)
+    naviagteToWaypoint(60,0)
+    naviagteToWaypoint(80,0)
+    naviagteToWaypoint(96,0)
+    time.sleep(2)
+    naviagteToWaypoint(96,20)
+    naviagteToWaypoint(96,24)
+    time.sleep(2)
+    naviagteToWaypoint(76,24)
+    naviagteToWaypoint(56,24)
+    naviagteToWaypoint(54,24)
+    time.sleep(2)
+    naviagteToWaypoint(54,44)
+    naviagteToWaypoint(54,64)
+    naviagteToWaypoint(54,84)
+    naviagteToWaypoint(54,104)
+    naviagteToWaypoint(54,124)
+    naviagteToWaypoint(54,138)
+    time.sleep(2)
+    naviagteToWaypoint(34,138)
+    naviagteToWaypoint(30,138)
+    time.sleep(2)
+    naviagteToWaypoint(30,118)
+    naviagteToWaypoint(30,98)
+    naviagteToWaypoint(30,78)
+    naviagteToWaypoint(30,58)
+    naviagteToWaypoint(30,54)
+    time.sleep(2)
+    naviagteToWaypoint(10,54)
+    naviagteToWaypoint(0,54)
+    time.sleep(2)
+    naviagteToWaypoint(0,34)
+    naviagteToWaypoint(0,14)
+    naviagteToWaypoint(0,0)
+
+run()
+
+
+
+    
+  
+
+
+
+
+
+    
